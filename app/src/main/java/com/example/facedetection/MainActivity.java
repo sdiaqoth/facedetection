@@ -4,6 +4,8 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
 import android.graphics.Bitmap;
@@ -20,7 +22,6 @@ import android.media.Image;
 import android.os.Bundle;
 import android.text.InputType;
 import android.util.Pair;
-import android.util.Size;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -39,6 +40,8 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.face.Face;
 import com.google.mlkit.vision.face.FaceDetection;
@@ -54,6 +57,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.ReadOnlyBufferException;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -63,18 +67,19 @@ import java.util.concurrent.ExecutionException;
 public class MainActivity extends AppCompatActivity{
     PreviewView previewView;
     ImageView imageView;
-    ImageButton camButton, switchCam, saveFace;
+    ImageButton camButton, switchCam, saveFace, listButton;
     CameraSelector cameraSelector;
     ProcessCameraProvider cameraProvider;
     GraphicOverlay graphicOverlay;
     boolean cameraOpen = false, start = true, flipV = false;
     static final int inputSize = 112, outputSize = 192;
     static final float imgMean = 128.0f, imgSTD = 128.0f;
+    static float distance = 1.0f;
     int lensFacing = CameraSelector.LENS_FACING_BACK; //Default Back Camera
 
     Interpreter tfLite;
     float[][] embeddings;
-    private final HashMap<String, SimilarityClassifier.Recognition> registered = new HashMap<>(); //saved Faces
+    private HashMap<String, SimilarityClassifier.Recognition> registered = new HashMap<>(); //saved Faces
 
     //(*)////////////////////////////////////////////////////////
 
@@ -82,6 +87,7 @@ public class MainActivity extends AppCompatActivity{
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        registered = readFromSP(); //Load saved faces from memory when app starts
 
         previewView = findViewById(R.id.previewView); previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
         camButton = findViewById(R.id.button_cam);
@@ -89,6 +95,10 @@ public class MainActivity extends AppCompatActivity{
         imageView = findViewById(R.id.image_view);
         graphicOverlay = findViewById(R.id.graphic_overlay);
         saveFace = findViewById(R.id.save_face); saveFace.setVisibility(View.INVISIBLE);
+        listButton = findViewById(R.id.list_button);
+
+        SharedPreferences sharedPref = getSharedPreferences("Distance", Context.MODE_PRIVATE);
+        distance = sharedPref.getFloat("distance",1.00f);
 
         /////////////////////////////////////////////////////////
 
@@ -153,6 +163,38 @@ public class MainActivity extends AppCompatActivity{
 
         /////////////////////////////////////////////////////////
 
+        listButton.setOnClickListener(v -> {
+            AlertDialog.Builder builder = new AlertDialog.Builder(this);
+            // System.out.println("Registered"+registered);
+            if(registered.isEmpty())
+                builder.setTitle("list is empty");
+            else
+                builder.setTitle("Face list:");
+
+            // add a checkbox list
+            String[] names= new String[registered.size()];
+            boolean[] checkedItems = new boolean[registered.size()];
+            int i=0;
+            for (Map.Entry<String, SimilarityClassifier.Recognition> entry : registered.entrySet())
+            {
+                //System.out.println("NAME"+entry.getKey());
+                names[i]=entry.getKey();
+                checkedItems[i]=false;
+                i=i+1;
+            }
+            builder.setItems(names,null);
+
+            builder.setPositiveButton("Save All", (dialog, which) -> insertToSP(registered,0));
+            builder.setNeutralButton("Update with", (dialog, which) -> insertToSP(registered,2));
+            builder.setNegativeButton("Clear All", (dialog, which) -> insertToSP(registered,1));
+
+            // create and show the alert dialog
+            AlertDialog dialog = builder.create();
+            dialog.show();
+        });
+
+        /////////////////////////////////////////////////////////
+
         try {
             String modelFile = "mobile_face_net.tflite"; //file name in assets
             tfLite = new Interpreter(loadModelFile(this, modelFile));
@@ -173,6 +215,48 @@ public class MainActivity extends AppCompatActivity{
         long declaredLength = fileDescriptor.getDeclaredLength();
         return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
     }
+
+    //(*)////////////////////////////////////////////////////////
+
+    private void insertToSP(HashMap<String, SimilarityClassifier.Recognition> jsonMap, int mode) { //mode= 0:save all, 1:clear all, 2:update all
+        if(mode==1) jsonMap.clear();
+        else if (mode==0) jsonMap.putAll(readFromSP());
+        String jsonString = new Gson().toJson(jsonMap);
+        SharedPreferences sharedPreferences = getSharedPreferences("HashMap", MODE_PRIVATE);
+        SharedPreferences.Editor editor = sharedPreferences.edit();
+        editor.putString("map", jsonString);
+        //System.out.println("Input josn"+jsonString.toString());
+        editor.apply();
+        Toast.makeText(this, "Recognitions Saved", Toast.LENGTH_SHORT).show();
+    }
+
+    //(*)////////////////////////////////////////////////////////
+    //Load Faces from Shared Preferences.Json String to Recognition object
+    private HashMap<String, SimilarityClassifier.Recognition> readFromSP(){
+        SharedPreferences sharedPreferences = getSharedPreferences("HashMap", MODE_PRIVATE);
+        String defValue = new Gson().toJson(new HashMap<String, SimilarityClassifier.Recognition>());
+        String json=sharedPreferences.getString("map",defValue);
+        // System.out.println("Output json" + json.toString());
+        TypeToken<HashMap<String,SimilarityClassifier.Recognition>> token = new TypeToken<HashMap<String,SimilarityClassifier.Recognition>>() {};
+        HashMap<String,SimilarityClassifier.Recognition> retrievedMap=new Gson().fromJson(json,token.getType());
+        // System.out.println("Output map" + retrievedMap.toString());
+
+        //During type conversion and save/load procedure,format changes(eg float converted to double).
+        //So embeddings need to be extracted from it in required format(eg.double to float).
+        for (Map.Entry<String, SimilarityClassifier.Recognition> entry : retrievedMap.entrySet())
+        {
+            float[][] output=new float[1][outputSize];
+            ArrayList arrayList= (ArrayList) entry.getValue().getExtra();
+            arrayList = (ArrayList) arrayList.get(0);
+            for (int counter = 0; counter < arrayList.size(); counter++) {
+                output[0][counter]= ((Double) arrayList.get(counter)).floatValue();
+            }
+            entry.getValue().setExtra(output);
+        }
+        Toast.makeText(this, "Recognitions Loaded", Toast.LENGTH_SHORT).show();
+        return retrievedMap;
+    }
+
 
     //(*)
 
@@ -203,8 +287,8 @@ public class MainActivity extends AppCompatActivity{
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
         ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
-                //.setTargetAspectRatio(AspectRatio.RATIO_4_3)
-                .setTargetResolution(new Size(640, 480))
+                .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                .setTargetRotation(previewView.getDisplay().getRotation())
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) //Latest frame is shown
                 .build();
 
@@ -237,6 +321,9 @@ public class MainActivity extends AppCompatActivity{
 
     private void detect(List<Face> faces, InputImage inputImage) {
         String name = null;
+        float scaleX = (float) previewView.getWidth() / (float) inputImage.getHeight();
+        float scaleY = (float) previewView.getHeight() / (float) inputImage.getWidth();
+
         if (faces.size() > 0){
             //Toast.makeText(this, R.string.face_detected, Toast.LENGTH_SHORT).show();
             Face face = faces.get(0); //the first face detected
@@ -249,7 +336,7 @@ public class MainActivity extends AppCompatActivity{
             saveFace.setVisibility(View.VISIBLE);
 
             if(start) name = recognize(bmp);
-            if(name != null) graphicOverlay.draw(face.getBoundingBox(), name);
+            if(name != null) graphicOverlay.draw(face.getBoundingBox(), scaleX, scaleY, name);
         }
         else
         {
@@ -259,6 +346,8 @@ public class MainActivity extends AppCompatActivity{
                 Toast.makeText(this, R.string.no_face_detected, Toast.LENGTH_SHORT).show();
         }
     }
+
+    //(*)
 
     public String recognize(final Bitmap bitmap){
         ByteBuffer imgData = ByteBuffer.allocateDirect(inputSize * inputSize * 3 * 4); //Create ByteBuffer to store normalized image
@@ -285,15 +374,15 @@ public class MainActivity extends AppCompatActivity{
 
         tfLite.runForMultipleInputsOutputs(inputArray, outputMap); //Run model
 
-
-        float distance;
+        float distance_local;
         //Compare new face with saved Faces.
         if (registered.size() > 0) {
             final Pair<String, Float> nearest = findNearest(embeddings[0]); //Find closest matching face
             if (nearest != null) {
                 final String name = nearest.first;
-                distance = nearest.second;
-                if(distance < 1.000f) return name; //If distance between closest found face is more than 1.000 ,then UNKNOWN
+
+                distance_local = nearest.second;
+                if(distance_local < distance) return name; //If distance between closest found face is more than 1.000 ,then UNKNOWN
                 else return "unknown";
             }
         }
@@ -306,7 +395,7 @@ public class MainActivity extends AppCompatActivity{
     // looks for the nearest embedding in the dataset (using L2 norm) and returns the pair <id, distance>
     private Pair<String, Float> findNearest(float[] emb) {
 
-        Pair<String, Float> ret = null;
+        Pair<String, Float> ret = null; //to get closest match
         for (Map.Entry<String, SimilarityClassifier.Recognition> entry : registered.entrySet()) {
             final String name = entry.getKey();
             final float[] knownEmb = ((float[][]) entry.getValue().getExtra())[0];

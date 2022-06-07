@@ -28,23 +28,23 @@ public class GraphicOverlay extends View {
         if(rectF != null){
             //the text
             labelPaint.setColor(Color.rgb(255, 120, 50)); //orange
-            labelPaint.setTextSize(70);
+            labelPaint.setTextSize(60);
             labelPaint.setTypeface(Typeface.DEFAULT);
             //the rectangle
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(5);
-            if(name != null && !name.trim().isEmpty() && !name.equals("unknown")) paint.setColor(Color.GREEN);
+            if(name != null && !name.equals("unknown")) paint.setColor(Color.GREEN);
             else paint.setColor(Color.RED);
             canvas.drawRect(rectF, paint);
             canvas.drawText(name, rectF.left + 0.0f, rectF.top - 15.0f, labelPaint);
         }
     }
 
-    public void draw(Rect rect, String name){
-        this.rectF = new RectF((float) rect.left,
-                (float) rect.top,
-                (float) rect.right,
-                (float) rect.bottom);
+    public void draw(Rect rect, float scaleX, float scaleY, String name){
+        this.rectF = new RectF((float) rect.left * scaleX - 10.0f,
+                (float) rect.top * scaleY - 10.0f,
+                (float) rect.right * scaleX + 10.0f,
+                (float) rect.bottom * scaleY + 10.0f);
         this.name = name;
         postInvalidate();
         requestLayout();

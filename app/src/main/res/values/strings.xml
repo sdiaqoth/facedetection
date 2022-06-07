@@ -3,7 +3,7 @@
     <string name="button_cam">camera button</string>
     <string name="switch_cam">switch camera lens</string>
     <string name="image_view">face detected</string>
-    <string name="trained_img">trained images</string>
+    <string name="list">list of faces</string>
 
     <string name="face_detected">face detected</string>
     <string name="no_face_detected">no face detected</string>
