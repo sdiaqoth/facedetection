@@ -247,10 +247,9 @@ public class MainActivity extends AppCompatActivity{
 
             imageView.setImageBitmap(bmp);
             saveFace.setVisibility(View.VISIBLE);
-            graphicOverlay.draw(face.getBoundingBox());
 
             if(start) name = recognize(bmp);
-            if(name != null) Toast.makeText(this, name, Toast.LENGTH_SHORT).show();
+            if(name != null) graphicOverlay.draw(face.getBoundingBox(), name);
         }
         else
         {
